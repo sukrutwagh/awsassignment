@@ -1,0 +1,196 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "AWS CloudFormation Template to create stack  Windows Instance per Assignment 1 - Refer: AWS Fundamentals - Exercise 1 v4 1.docx",
+    "Parameters": {
+        "KeyPair": {
+            "Description": "Name of the keypair to use for SSH access",
+            "Type": "String"
+        },
+        "WebServerCapacity": {
+            "Default": "1",
+            "Description": "The initial number of WebServer instances",
+            "Type": "Number",
+            "MinValue": "1",
+            "MaxValue": "5",
+            "ConstraintDescription": "must be between 1 and 5 EC2 instances."
+        },
+        "InstanceType": {
+            "Description": "WebServer EC2 instance type",
+            "Type": "String",
+            "Default": "t2.micro",
+            "AllowedValues": [
+                "t2.micro"
+            ],
+            "ConstraintDescription": "must be a t2.micro instance type."
+        },
+        "WindowsImageId": {
+            "Description": "Windows server image id",
+            "Type": "String",
+            "Default": "ami-05b2eec0169084735",
+            "AllowedValues": [
+                "ami-05b2eec0169084735"
+            ],
+            "ConstraintDescription": "must be ami-05b2eec0169084735"
+        },
+        "LinuxImageId": {
+            "Description": "Linux server image id",
+            "Type": "String",
+            "Default": "ami-05b3bcf7f311194b3",
+            "AllowedValues": [
+                "ami-05b3bcf7f311194b3"
+            ],
+            "ConstraintDescription": "must be ami-05b3bcf7f311194b3"
+        },
+        "SSHLocation": {
+            "Description": " The IP address range that can be used to SSH to the EC2 instances",
+            "Type": "String",
+            "MinLength": "9",
+            "MaxLength": "18",
+            "Default": "0.0.0.0/0",
+            "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+            "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+        }
+    },
+    "Resources": {
+        "LinuxVolume" : {
+            "Type" : "AWS::EC2::Volume",
+            "Properties" : {
+               "Size" : "1",
+               "AvailabilityZone" : "ap-southeast-1a"
+            },
+            "DeletionPolicy" : "Snapshot"
+         },
+        "LinuxInstance": {
+            "Type": "AWS::EC2::Instance",
+            "Metadata" : {
+                "Comment1" : "Configure the bootstrap helpers to install the Apache Web Server and PHP",
+                "AWS::CloudFormation::Init" : {
+                  "config" : {
+                    "packages" : {
+                      "yum" : {
+                        "httpd"     : [],
+                        "php"       : []
+                      }
+                    },
+                    "commands" : {
+                        "1_pvcreate" : {
+                            "command" : "pvcreate /dev/xvdh",
+                            "ignoreErrors" : "false"
+                        },
+                        "2_vgcreate" : {
+                            "command" : "vgcreate vg0 /dev/xvdh",
+                            "ignoreErrors" : "false"
+                        },
+                        "3_lvcreate" : {
+                            "command" : "lvcreate -l 100%FREE -n myapp vg0",
+                            "ignoreErrors" : "false"
+                        },
+                        "4_mkfs" : {
+                            "command" : "mkfs.ext4 /dev/vg0/myapp",
+                            "ignoreErrors" : "false"
+                        },
+                        "5_mkdir" : {
+                            "command" : "mkdir /var/myapp",
+                            "ignoreErrors" : "false"
+                        },
+                        "6_fstab" : {
+                            "command" : "echo \"/dev/mapper/vg0-myapp /var/myapp ext4 defaults 0 2\" >> /etc/fstab",
+                            "ignoreErrors" : "false"
+                        },
+                        "7_mount" : {
+                            "command" : "mount -a",
+                            "ignoreErrors" : "false"
+                        },
+                        "8_copy_index" : {
+                            "command" : "cp -pr /var/www/html/ /var/myapp",
+                            "ignoreErrors" : "false"
+                        }
+                    },
+                    "files" : {
+                      "/var/www/html/index.php" : {
+                        "source" : "https://s3-ap-southeast-1.amazonaws.com/assignment1bucket-s3bucket-xjedo1xwewf4/linux/index.php",
+                        "mode"  : "000644",
+                        "owner" : "apache",
+                        "group" : "apache"
+                      },
+                      "/etc/cfn/cfn-hup.conf" : {
+                        "content" : { "Fn::Join" : ["", [
+                          "[main]\n",
+                          "stack=", { "Ref" : "AWS::StackId" }, "\n",
+                          "region=", { "Ref" : "AWS::Region" }, "\n"
+                        ]]},
+                        "mode"    : "000400",
+                        "owner"   : "root",
+                        "group"   : "root"
+                      },
+                      "/etc/httpd/conf/httpd.conf" : {
+                        "source" : "https://s3-ap-southeast-1.amazonaws.com/assignment1bucket-s3bucket-xjedo1xwewf4/linux/httpd.conf",
+                        "mode"    : "000644",
+                        "owner"   : "root",
+                        "group"   : "root"
+                      },
+        
+                      "/etc/cfn/hooks.d/cfn-auto-reloader.conf" : {
+                        "content": { "Fn::Join" : ["", [
+                          "[cfn-auto-reloader-hook]\n",
+                          "triggers=post.update\n",
+                          "path=Resources.LinuxInstance.Metadata.AWS::CloudFormation::Init\n",
+                          "action=/opt/aws/bin/cfn-init -v ",
+                          "         --stack ", { "Ref" : "AWS::StackName" },
+                          "         --resource LinuxInstance ",
+                          "         --region ", { "Ref" : "AWS::Region" }, "\n",
+                          "runas=root\n"
+                        ]]},
+                        "mode"    : "000400",
+                        "owner"   : "root",
+                        "group"   : "root"
+                      }
+                    },
+                    "services" : {
+                      "sysvinit" : {
+                        "httpd" : { "enabled" : "true", "ensureRunning" : "true" },
+                        "cfn-hup" : { "enabled" : "true", "ensureRunning" : "true",
+                                      "files" : ["/etc/cfn/cfn-hup.conf", "/etc/cfn/hooks.d/cfn-auto-reloader.conf"]}
+                      }
+                    }
+                  }
+                }
+              },
+            "Properties": {
+              "InstanceType": { "Ref" : "InstanceType" },
+              "ImageId": { "Ref" : "LinuxImageId" },
+              "Volumes" : [  {  "Device" : "/dev/sdh", "VolumeId" : {"Ref": "LinuxVolume"} } ],
+              "NetworkInterfaces" : [{
+                "GroupSet"                 : ["sg-0531ce845791a607b"],
+                "AssociatePublicIpAddress" : "true",
+                "DeviceIndex"              : "0",
+                "DeleteOnTermination"      : "true",
+                "SubnetId"                 : "subnet-00af1a787765279ef"
+              }],
+              "KeyName": {
+                "Ref": "KeyPair"
+              },
+              "UserData" : { "Fn::Base64" : { "Fn::Join" : ["", [
+                "#!/bin/bash -xe\n",
+                "yum update -y aws-cfn-bootstrap\n",
+   
+                "# Install the files and packages from the metadata\n",
+                "/opt/aws/bin/cfn-init -v ",
+                "         --stack ", { "Ref" : "AWS::StackName" },
+                "         --resource LinuxInstance ",
+                "         --region ", { "Ref" : "AWS::Region" }, "\n",
+                "# Signal the status from cfn-init\n",
+                "/opt/aws/bin/cfn-signal -e $? ",
+                "         --stack ", { "Ref" : "AWS::StackName" },
+                "         --resource LinuxInstance ",
+                "         --region ", { "Ref" : "AWS::Region" }, "\n"
+           ]]}}
+            }
+          }
+        
+   
+    },
+    "Outputs": {
+        
+    }
+}

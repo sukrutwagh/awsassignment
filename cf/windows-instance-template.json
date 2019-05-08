@@ -1,0 +1,174 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "AWS CloudFormation Template to create Windows Instance per Assignment 1 - Refer: AWS Fundamentals - Exercise 1 v4 1.docx",
+    "Parameters": {
+        "KeyPair": {
+            "Description": "Name of the keypair to use for SSH access",
+            "Type": "String"
+        },
+        "WebServerCapacity": {
+            "Default": "1",
+            "Description": "The initial number of WebServer instances",
+            "Type": "Number",
+            "MinValue": "1",
+            "MaxValue": "5",
+            "ConstraintDescription": "must be between 1 and 5 EC2 instances."
+        },
+        "InstanceType": {
+            "Description": "WebServer EC2 instance type",
+            "Type": "String",
+            "Default": "t2.micro",
+            "AllowedValues": [
+                "t2.micro"
+            ],
+            "ConstraintDescription": "must be a t2.micro instance type."
+        },
+        "WindowsImageId": {
+            "Description": "Windows server image id",
+            "Type": "String",
+            "Default": "ami-012799a835ac6a1d0",
+            "AllowedValues": [
+                "ami-012799a835ac6a1d0"
+            ],
+            "ConstraintDescription": "must be ami-012799a835ac6a1d0"
+        },
+        "LinuxImageId": {
+            "Description": "Linux server image id",
+            "Type": "String",
+            "Default": "ami-05b3bcf7f311194b3",
+            "AllowedValues": [
+                "ami-05b3bcf7f311194b3"
+            ],
+            "ConstraintDescription": "must be ami-05b3bcf7f311194b3"
+        },
+        "SSHLocation": {
+            "Description": " The IP address range that can be used to SSH to the EC2 instances",
+            "Type": "String",
+            "MinLength": "9",
+            "MaxLength": "18",
+            "Default": "0.0.0.0/0",
+            "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+            "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+        }
+    },
+    "Resources": {
+        "WindowsVolume" : {
+            "Type" : "AWS::EC2::Volume",
+            "Properties" : {
+               "Size" : "1",
+               "AvailabilityZone" : "ap-southeast-1b"
+            },
+            "DeletionPolicy" : "Snapshot"
+         },
+        "WindowsInstance": {
+            "Type": "AWS::EC2::Instance",
+            "Metadata" : {
+                "Comment1" : "Configure the bootstrap helpers to install the Windows server with IIS",
+                "AWS::CloudFormation::Init" : {
+                  "config" : {
+                    "packages" : {
+                      
+                    },
+                    "commands" : {
+                        "1_mount" : {
+                            "command" : "diskpart /s C:\\diskpart.txt",
+                            "ignoreErrors" : "false"
+                        },
+                        "2_create_directory" : {
+                          "command" : "mkdir D:\\inetpub\\myapp",
+                          "ignoreErrors" : "false"
+                        },
+                        "3_copy_website_to_mp" : {
+                          "command" : "copy C:\\index.html D:\\inetpub\\myapp",
+                          "ignoreErrors" : "false"
+                        },
+                        "4_startiis" : {
+                          "command" : "powershell.exe -file C:\\ASPwebIIS.ps1",
+                          "ignoreErrors" : "false"
+                        }
+                    },
+                    "files" : {
+                      "C:\\ASPwebIIS.ps1" : {
+                        "source" : "https://s3-ap-southeast-1.amazonaws.com/assignment1bucket-s3bucket-xjedo1xwewf4/windows/ASPwebIIS.ps1"
+                      },
+                      "C:\\diskpart.txt" : {
+                        "source" : "https://s3-ap-southeast-1.amazonaws.com/assignment1bucket-s3bucket-xjedo1xwewf4/windows/diskpart.txt"
+                      },
+                      "C:\\index.html" : {
+                        "source" : "https://s3-ap-southeast-1.amazonaws.com/assignment1bucket-s3bucket-xjedo1xwewf4/windows/index.html"
+                      },
+                      "c:\\cfn\\cfn-hup.conf" : {
+                        "content" : { "Fn::Join" : ["", [
+                          "[main]\n",
+                          "stack=", { "Ref" : "AWS::StackId" }, "\n",
+                          "region=", { "Ref" : "AWS::Region" }, "\n"
+                        ]]}
+                      },
+                      "c:\\cfn\\hooks.d\\cfn-auto-reloader.conf" : {
+                        "content": { "Fn::Join" : ["", [
+                          "[cfn-auto-reloader-hook]\n",
+                          "triggers=post.update\n",
+                          "path=Resources.WindowsInstance.Metadata.AWS::CloudFormation::Init\n",
+                          "action=cfn-init.exe -v -s ",
+                          "         --stack ", { "Ref" : "AWS::StackName" },
+                          "         --resource WindowsInstance ",
+                          "         --region ", { "Ref" : "AWS::Region" }, "\n"
+                        ]]}
+                      }
+                    },
+                    "services" : {
+                      "windows" : {
+                        "cfn-hup" : {
+                        "enabled" : "true",
+                        "ensureRunning" : "true",
+                        "files" : ["c:\\cfn\\cfn-hup.conf", "c:\\cfn\\hooks.d\\cfn-auto-reloader.conf"]
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+            "Properties": {
+              "InstanceType": { "Ref" : "InstanceType" },
+              "ImageId": { "Ref" : "WindowsImageId" },
+              "Volumes" : [  {  "Device" : "/dev/sdh", "VolumeId" : {"Ref": "WindowsVolume"} } ],
+              "NetworkInterfaces" : [{
+                "GroupSet"                 : ["sg-0531ce845791a607b"],
+                "AssociatePublicIpAddress" : "true",
+                "DeviceIndex"              : "0",
+                "DeleteOnTermination"      : "true",
+                "SubnetId"                 : "subnet-088bcdcb96bcb298b"
+              }],
+              "KeyName": {
+                "Ref": "KeyPair"
+              },
+              "UserData": {
+                "Fn::Base64": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "<script>\n",
+                      "cfn-init.exe -v -s ",
+                      {
+                        "Ref": "AWS::StackId"
+                      },
+                      " -r WindowsInstance",
+                      " --region ",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      "\n",
+                      "</script>"
+                    ]
+                  ]
+                }
+              }
+            }
+          }
+        
+   
+    },
+    "Outputs": {
+        
+    }
+}
